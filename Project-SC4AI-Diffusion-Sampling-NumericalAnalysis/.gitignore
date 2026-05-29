@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+figures/
+.ipynb_checkpoints/
+.pytest_cache/
+uv.lock
