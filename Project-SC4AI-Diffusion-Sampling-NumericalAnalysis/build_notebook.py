@@ -213,7 +213,7 @@ $$x_{n+1}=(1-a(t_n)h)\,x_n+\sqrt{\beta(t_n)h}\,\zeta_n,\quad\zeta_n\sim\mathcal 
 
 $$\boxed{\,V_{n+1}=(1-a(t_n)h)^2\,V_n+\beta(t_n)h\,}.$$
 
-它的连续极限（反向时间 $\tau$）为 $\;\mathrm{d}V/\mathrm{d}\tau=-2a(1-\tau)V+\beta(1-\tau)$。这里的因子 $2$ 来自 Itô 公式 $\mathrm{d}\,\mathbb E[Y^2]=(2a\,\mathbb E[Y^2]+\beta)\mathrm{d}\tau$；若把它漏掉，求得的末端方差会是 $0.76$ 而非正确的 $0.25$（已数值核对）。
+它的连续极限（反向时间 $\tau$）为 $\;\mathrm{d}V/\mathrm{d}\tau=-2a(1-\tau)V+\beta(1-\tau)$。这里的因子 $2$ 来自 Itô 公式：对 $\mathrm{d}Y=-a Y\,\mathrm{d}\tau+\sqrt{\beta}\,\mathrm{d}\tilde W$ 有 $\mathrm{d}\,\mathbb E[Y^2]=(-2a\,\mathbb E[Y^2]+\beta)\mathrm{d}\tau$；若把因子 $2$ 漏掉，求得的末端方差会是 $0.76$ 而非正确的 $0.25$（已数值核对）。
 
 ### §4 后向误差分析：EM 实际在求解哪条方程
 把上面的递推按 $h$ 展开成 $V_{n+1}=V_n+hF+h^2G$，其中
@@ -351,7 +351,7 @@ md(r"""
 
 $$|1-a(t)h|\le1\ \Longleftrightarrow\ 0\le h\le \frac{2}{a(t)}.$$
 
-$a(t)=\beta(t)(1/v(t)-\tfrac12)$ 在 $t\to1$ 处最大，主要是因为 $\beta(t)$ 增至 $20$（此时 $v\to1$，$1/v-\tfrac12$ 一项反而降到最小值 $\tfrac12$，但 $\beta$ 的增长占主导），$a(1)\approx10.0$，因此最严格的稳定步长约 $h\le0.2$，对应临界步数 $N^*\approx(1-\varepsilon)\,a_{\max}/2\approx5$。需要注意的是，概率流 ODE 并不存在这一约束（当 $v\to1$ 时其漂移系数 $\tfrac12\beta(1/v-1)\to0$），这也是确定性 ODE 采样往往能用更少步数的原因。
+$a(t)=\beta(t)(1/v(t)-\tfrac12)$ 在 $t\to1$ 处最大，主要是因为 $\beta(t)$ 增至 $20$（此时 $v\to1$，$1/v-\tfrac12$ 一项反而降到最小值 $\tfrac12$，但 $\beta$ 的增长占主导），$a(1)\approx10.0$，因此最严格的稳定步长约 $h\le0.2$，对应临界步数 $N^*\approx(1-\varepsilon)\,a_{\max}/2\approx5$。作为对照，概率流 ODE 的显式 Euler 也有自己的稳定界 $|1-c(t)h|\le1$，其中漂移系数 $c(t)=\tfrac12\beta(t)(1/v(t)-1)$，本设定下 $\max_t c(t)\approx2.36$（在 $t\approx0.5$ 处），对应 $h\le0.85$，比反向 SDE 的 $0.2$ 宽得多。所以并不是"概率流 ODE 没有稳定约束"，而是它的约束宽松得多，这也是确定性 ODE 采样往往能用更少步数的一个原因。
 """)
 
 code(r"""
@@ -426,7 +426,7 @@ $$\frac{\mathrm{d}x}{\mathrm{d}t}=f_{\rm pf}(t,x)=-\tfrac12\beta x-\tfrac12\beta
 
 $$\boxed{\,x(t)=\sqrt{v(t)/v(1)}\;x(1)\,},$$
 
-可以作为高精度参照。下面验证 Euler 与 Heun 相对该闭式解的收敛阶（这条 ODE 不受稳定域约束，少步即可），并在 Swiss-Roll 上用训练得到的网络 score 画出 NFE 与样本质量的关系。
+可以作为高精度参照。下面验证 Euler 与 Heun 相对该闭式解的收敛阶（这条 ODE 的稳定界比反向 SDE 宽得多，见 §6，少步即可），并在 Swiss-Roll 上用训练得到的网络 score 比较两种采样器在相同 NFE 下的样本质量。
 """)
 
 code(r"""
@@ -438,36 +438,43 @@ e_he = np.array([abs(dna.pf_ode_sample(N, 'heun', 2.0) - refx) for N in Ns6])
 s_eu = np.polyfit(np.log(hs6), np.log(e_eu), 1)[0]
 s_he = np.polyfit(np.log(hs6), np.log(e_he), 1)[0]
 
-# 实验⑥(b)：Swiss-Roll 上用训练网络 score 的 NFE-质量 Pareto
+# 实验⑥(b)：Swiss-Roll 上比较两种采样器的“真实 NFE–质量”（用训练网络 score）
+# 公平性：EM 每步 1 次 score 评估（NFE=N），Heun 每步 2 次（NFE=2N）；
+# 横轴用 reverse_sample 返回的真实 NFE，而非步数。
 data2d = dna.make_swiss_roll_2d(2000, seed=0)
 print('训练 Swiss-Roll score 网络（约 1 分钟, device=%s）...' % DEVICE)
 net2d = dna.train_score_net_data(data2d, n_iters=6000, device=DEVICE, seed=0)
 net_score = lambda x, t: dna.eval_score_net(net2d, x, t, device=DEVICE)
-nfes = [5, 10, 20, 50, 100]
-qual = {'em': [], 'pf_heun': []}
-for m in qual:
-    for N in nfes:
-        Xg = dna.reverse_sample(net_score, N, m, n_samples=2000, dim=2, eps=EPS, seed=1)
-        qual[m].append(dna.sliced_wasserstein(Xg, data2d))
+steps = [5, 10, 20, 50, 100]
+res = {'em': {'nfe': [], 'q': []}, 'pf_heun': {'nfe': [], 'q': []}}
+for m in res:
+    for N in steps:
+        Xg, nfe = dna.reverse_sample(net_score, N, m, n_samples=2000, dim=2,
+                                     eps=EPS, seed=1, return_nfe=True)
+        res[m]['nfe'].append(nfe)
+        res[m]['q'].append(dna.sliced_wasserstein(Xg, data2d))
+Xbest = dna.reverse_sample(net_score, 100, 'pf_heun', n_samples=2000, dim=2, eps=EPS, seed=1)
 
 fig, ax = plt.subplots(1, 3, figsize=(15, 4))
 ax[0].loglog(hs6, e_eu, 'o-', label='Euler（斜率=%.2f）' % s_eu)
 ax[0].loglog(hs6, e_he, 's-', label='Heun（斜率=%.2f）' % s_he)
 ax[0].set_title('实验⑥(a) PF-ODE 收敛阶（对闭式解）'); ax[0].set_xlabel('h'); ax[0].set_ylabel('末态 L2 误差'); ax[0].legend()
-ax[1].plot(nfes, qual['em'], 'o-', label='反向 SDE (EM)')
-ax[1].plot(nfes, qual['pf_heun'], 's-', label='概率流 ODE (Heun)')
-ax[1].set_title('实验⑥(b) Swiss-Roll NFE–质量 Pareto'); ax[1].set_xlabel('NFE'); ax[1].set_ylabel('sliced-$W$ 到数据'); ax[1].legend()
-Xbest = dna.reverse_sample(net_score, 100, 'pf_heun', n_samples=2000, dim=2, eps=EPS, seed=1)
+ax[1].plot(res['em']['nfe'], res['em']['q'], 'o-', label='反向 SDE (EM, NFE=N)')
+ax[1].plot(res['pf_heun']['nfe'], res['pf_heun']['q'], 's-', label='概率流 ODE (Heun, NFE=2N)')
+ax[1].set_xscale('log'); ax[1].set_title('实验⑥(b) Swiss-Roll 真实 NFE–质量')
+ax[1].set_xlabel('NFE（score 评估次数）'); ax[1].set_ylabel('sliced-$W$ 到数据'); ax[1].legend()
 ax[2].scatter(data2d[:, 0], data2d[:, 1], s=4, alpha=.4, label='数据')
 ax[2].scatter(Xbest[:, 0], Xbest[:, 1], s=4, alpha=.4, label='生成 (ODE,100步)')
 ax[2].set_title('生成样本 vs 数据'); ax[2].legend(); ax[2].set_aspect('equal')
 plt.tight_layout(); plt.savefig('figures/fig08_exp_integrator.png', bbox_inches='tight'); plt.show()
 print('PF-ODE: Euler 斜率=%.2f, Heun 斜率=%.2f' % (s_eu, s_he))
+print('EM   NFE=%s  q=%s' % (res['em']['nfe'], ['%.3f' % q for q in res['em']['q']]))
+print('Heun NFE=%s  q=%s' % (res['pf_heun']['nfe'], ['%.3f' % q for q in res['pf_heun']['q']]))
 assert s_he > s_eu + 0.5            # Heun 阶高于 Euler（仅 ODE 成立）
 """)
 
 md(r"""
-**实验⑥分析.** (a) 概率流 ODE 不受稳定域约束，Euler 与 Heun 分别以约 $1$、约 $2$ 阶收敛到闭式解 $x\propto\sqrt v$，少步就能达到较高精度，这正是 DPM-Solver 一类少步采样有效的原因。(b) Swiss-Roll 上比较随机 EM 与确定性 ODE（Heun）的 sliced-Wasserstein 随 NFE 的变化：当 NFE$\ge$10 时两者质量接近；在最少步（NFE=5）处结果对随机性和步长都很敏感，因为此时 EM 恰好落在稳定性临界 $N^*\approx5$ 附近，单步可能越出稳定域。还需说明一点：单纯把系数冻结做指数步，在含 score 项时未必优于 Euler，其优势仅体现在线性漂移部分；少步采样真正的收益来自概率流 ODE 不受稳定域约束以及高阶格式，而不是简单的指数化。
+**实验⑥分析.** (a) 概率流 ODE 的稳定界远宽于反向 SDE（见 §6），Euler 与 Heun 分别以约 $1$、约 $2$ 阶收敛到闭式解 $x\propto\sqrt v$，少步就能达到较高精度，这正是 DPM-Solver 一类少步采样的基础。(b) 在 Swiss-Roll 上用训练网络 score 比较随机 EM 与确定性 ODE（Heun），横轴取真实 NFE（score 评估次数：EM 为 $N$，Heun 为 $2N$，以保证公平）。结果有两点：其一，EM 在最少步（$N=5$，落在稳定性临界 $N^*\approx5$ 附近）时确实失稳、误差很大，但 $N\ge10$（NFE$\ge10$）之后迅速降到 sliced-Wasserstein 约 $0.08$–$0.09$；其二，Heun 的 sliced-Wasserstein 约 $0.18$，且每步要两次 score，按相同 NFE 反而不占优。也就是说，在本例（数据近似单团、score 接近线性）里，随机 EM 只要避开失稳步数就足够好，高阶 ODE 的优势并没有体现出来；它的优势更多出现在 score 强非线性、需要极少步的场景。此外，单纯把系数冻结做指数步在含 score 项时也未必优于 Euler，其好处仅限于线性漂移部分。
 
 ### §9 随机与确定性采样器的偏差–方差（探索性）
 """)
@@ -488,7 +495,7 @@ for d in deltas:
 
 fig, ax = plt.subplots(1, 2, figsize=(11, 4))
 ax[0].plot(Ns7, em_e, 'o-', label='SDE (EM)'); ax[0].plot(Ns7, od_e, 's-', label='ODE (Heun)')
-ax[0].set_title('实验⑦(a) 无扰动：方差误差 vs NFE'); ax[0].set_xlabel('NFE'); ax[0].set_ylabel('|var - v(ε)|'); ax[0].legend(); ax[0].set_yscale('log')
+ax[0].set_title('实验⑦(a) 无扰动：方差误差 vs 步数 N'); ax[0].set_xlabel('步数 N'); ax[0].set_ylabel('|var - v(ε)|'); ax[0].legend(); ax[0].set_yscale('log')
 ax[1].plot(deltas, rob_em, 'o-', label='SDE (EM)'); ax[1].plot(deltas, rob_od, 's-', label='ODE (Heun)')
 ax[1].set_title('实验⑦(b) 对乘性 score 误差 δ 的鲁棒性'); ax[1].set_xlabel('score 误差 δ'); ax[1].set_ylabel('|var - v(ε)|'); ax[1].legend()
 plt.tight_layout(); plt.savefig('figures/fig09_bias_variance.png', bbox_inches='tight'); plt.show()
@@ -497,7 +504,7 @@ assert np.all(np.isfinite(em_e)) and np.all(np.isfinite(rob_od))
 """)
 
 md(r"""
-**实验⑦分析（探索性）.** 无扰动时，确定性 ODE 与随机 SDE 的方差误差随 NFE 同步下降。在乘性 score 误差 $\delta$ 下，本次实验里负向扰动（$\delta<0$）时 ODE（Heun）的误差增长明显快于 EM，正向扰动时两者相近，可见"随机性能自我校正 score 误差"这一说法依赖于扰动的方向，并不普遍成立。它本身就取决于扰动模型与所用指标，因此这里只作为探索性观察列出，不下定论。
+**实验⑦分析（探索性）.** 无扰动时，确定性 ODE 与随机 SDE 的方差误差随步数 $N$ 同步下降（这里两者用相同步数比较，主要看趋势）。在乘性 score 误差 $\delta$ 下，本次实验里负向扰动（$\delta<0$）时 ODE（Heun）的误差增长明显快于 EM，正向扰动时两者相近，可见"随机性能自我校正 score 误差"这一说法依赖于扰动的方向，并不普遍成立。它本身就取决于扰动模型与所用指标，因此这里只作为探索性观察列出，不下定论。
 """)
 
 # ======================================================================
@@ -596,7 +603,7 @@ assert res_vs_delta[np.argmin(abs(deltas-0.3))] > res_vs_delta[np.argmin(abs(del
 """)
 
 md(r"""
-**实验⑨分析.** (a) 解析 score 的 FPE 残差为机器零，且随扰动 $\delta$ 单调增大，这就把"是否满足 Fokker–Planck"变成了一个对 score 质量的后验诊断。(b) 网络 score 的误差在 $|x|$ 较大、$t$ 较小（低密度、小噪声）的区域更大，与预期一致；由于网络没有解析的 $\partial_t\log p$，这里只画定性热力图，不下"残差约等于误差"这类定量结论。
+**实验⑨分析.** (a) 解析 score（$\delta=0$）的 FPE 残差为机器零，并随扰动幅度 $|\delta|$ 增大而增大（曲线以 $\delta=0$ 为谷底）；这把"是否满足 Fokker–Planck"变成了一个对 score 质量的后验诊断（此结论是在本实验的加性常数扰动族下得到的，并非对任意扰动的一般定理）。(b) 网络 score 的误差在 $|x|$ 较大、$t$ 较小（低密度、小噪声）的区域更大，与预期一致；由于网络没有解析的 $\partial_t\log p$，这里只画定性热力图，不下"残差约等于误差"这类定量结论。
 
 ### §12 把分析迁移到网络 score
 网络 score 与真值之间存在逼近误差。这里分两步看。第一步是机理：用一个固定的相对偏差 $\rho$ 来刻画 score 误差 $s_\rho=(1+\rho)s^*$，对应反向漂移 $a_\rho(t)=\beta(t)\big((1+\rho)/v(t)-\tfrac12\big)$。此时离散误差随 $h$ 减小以斜率 $1$ 下降，但会被 $\rho$ 带来的一个非零常数（误差地板）截断，于是与纯离散曲线相交，交叉点之后再加步数已无收益。第二步是对照：叠加实际训练网络的采样误差（在 CPU 上确定性采样）。这里要留意，由静态 score 回归得到的单个标量 $\hat\rho$ 只是误差地板的一个上界估计——采样误差沿轨迹会部分相消，所以网络实测曲线在本文的步数范围内通常还没触底，其交叉点是按机理外推的预期，而非已直接观测到的。
@@ -734,14 +741,14 @@ md(r"""
 
 1. 用后向误差分析给出反向 EM 在生成分布方差上的领头阶 $O(h)$ 偏差系数，与 Richardson 外推吻合到相对误差约 $7.5\times10^{-6}$，由此明确了 EM 实际在求解哪条被修正的方程。
 2. 指出本问题属于加性噪声，EM 的强阶与弱阶均为 $1$（不是乘性噪声下常说的 $1/2$），并用共享布朗路径和几何布朗运动两组实验加以验证。
-3. 用绝对稳定域把"步数不能太少"写成判据 $h\le2/a(t)$，指出最不稳定时刻在 $t\approx1$，并说明概率流 ODE 不受此约束，是少步采样有效的原因。
+3. 用绝对稳定域把"步数不能太少"写成判据 $h\le2/a(t)$，指出最不稳定时刻在 $t\approx1$，并说明概率流 ODE 的稳定界宽得多（$h\le0.85$，对比反向 SDE 的 $0.2$），这是少步采样有效的一个原因。
 4. 给出半隐式/指数法（降低误差常数）、Richardson 外推（提阶）以及概率流 ODE 的闭式解 $x\propto\sqrt v$，并指出单纯指数化的局限。
 5. 把总采样误差分解为分数、离散、先验三项分别度量，并用 FPE 残差诊断 score 质量。
 6. 把分析迁移到训练网络 score，定量考察离散误差与网络逼近误差的交叉。
 7. 在二维高斯混合（非线性 score）上重复误差三分解，验证该框架不限于可解析的高斯情形；此时分数估计误差上升到与时间离散误差相当的量级。
 
 ### 与 DPM-Solver 等方法的联系
-DPM-Solver、DEIS 等少步采样器的核心，正是对半线性概率流 ODE 的线性漂移做指数（变易常数）积分。本文在高斯设定下给出了这条 ODE 的闭式解和收敛阶，也说明少步采样的收益主要来自这条 ODE 不受稳定域约束以及高阶格式，而不是单纯把漂移指数化。
+DPM-Solver、DEIS 等少步采样器的核心，正是对半线性概率流 ODE 的线性漂移做指数（变易常数）积分。本文在高斯设定下给出了这条 ODE 的闭式解和收敛阶，也说明少步采样的收益主要来自这条 ODE 较宽的稳定界与高阶格式，而不是单纯把漂移指数化（实验⑥(b) 也表明，在近线性、单团的简单数据上，随机 EM 已足够好，高阶 ODE 不一定占优）。
 
 ### 与课程的衔接
 本文用的"采样修正方程"和 Lect5 的"SGD 修正方程"是同一种后向误差分析：都是把一个离散迭代（这里是采样，那里是 SGD）理解成某条被修正的微分方程的数值格式。这与整门课"用微分方程理解机器学习方法"的思路一致。
