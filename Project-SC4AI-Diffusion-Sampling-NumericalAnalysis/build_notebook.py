@@ -24,7 +24,7 @@ md(r"""
 
 ---
 
-> **摘要**　扩散模型的生成过程可以写成一条反向时间的随机微分方程（SDE），或与之同分布的概率流常微分方程（ODE），因此采样本质上是在数值求解一条微分方程。本文沿这一视角，用数值分析的方法考察反向采样的误差与稳定性。当数据取各向同性高斯时，反向过程是线性 SDE，它的各阶矩满足闭式的确定性递推；这给出一组解析参照值，可以用来逐一检验下面的结论。具体地：(i) 用后向误差分析（修正方程）推出 Euler–Maruyama 采样在生成分布方差上的领头阶 $O(h)$ 偏差及其系数，并用 Richardson 外推独立核对，两者相对误差约 $7.5\times10^{-6}$；(ii) 指出本问题属于加性噪声，此时 EM 的强收敛阶为 $1$，而不是乘性噪声下常说的 $1/2$；(iii) 用显式 Euler 的绝对稳定域解释采样步长的上界 $h\le 2/a(t)$；(iv) 给出半隐式/指数积分器以及概率流 ODE 的闭式解 $x\propto\sqrt{v}$，并比较少步采样；(v) 把总采样误差拆成分数、离散、先验三部分，并用 Fokker–Planck 残差诊断 score 的质量；(vi) 把分析迁移到训练得到的网络 score 上，定量考察离散误差与网络逼近误差的交叉。全部实验在二维以内、单机分钟级完成（代码同时支持 Apple Silicon 的 MPS 与 CPU，网络实验默认用 CPU 以保证逐位可复现），每条解析结论都在对应代码单元里用定量断言与解析参照对照。
+> **摘要**　扩散模型的生成过程可以写成一条反向时间的随机微分方程（SDE），或与之同分布的概率流常微分方程（ODE），因此采样本质上是在数值求解一条微分方程。本文沿这一视角，用数值分析的方法考察反向采样的误差与稳定性。当数据取各向同性高斯时，反向过程是线性 SDE，它的各阶矩满足闭式的确定性递推；这给出一组解析参照值，可以用来逐一检验下面的结论。具体地：(i) 用后向误差分析（修正方程）推出 Euler–Maruyama 采样在生成分布方差上的领头阶 $O(h)$ 偏差及其系数，并用 Richardson 外推独立核对，两者相对误差约 $7.5\times10^{-6}$；(ii) 指出本问题属于加性噪声，此时 EM 的强收敛阶为 $1$，而不是乘性噪声下常说的 $1/2$；(iii) 用显式 Euler 的绝对稳定域解释采样步长的上界 $h\le 2/a(t)$；(iv) 给出半隐式/指数积分器以及概率流 ODE 的闭式解 $x\propto\sqrt{v}$，并比较少步采样；(v) 把总采样误差拆成分数、离散、先验三部分，并用 Fokker–Planck 残差诊断 score 的质量，再在二维高斯混合（非线性 score）上验证这一分解的推广性；(vi) 把分析迁移到训练得到的网络 score 上，定量考察离散误差与网络逼近误差的交叉。全部实验在二维以内、单机分钟级完成（代码同时支持 Apple Silicon 的 MPS 与 CPU，网络实验默认用 CPU 以保证逐位可复现），每条解析结论都在对应代码单元里用定量断言与解析参照对照。
 """)
 
 # ======================================================================
@@ -54,9 +54,10 @@ $$\mathrm{d}X_t = -\tfrac12\beta(t)X_t\,\mathrm{d}t + \sqrt{\beta(t)}\,\mathrm{d
 4. 给出半隐式/指数积分器（降低误差常数）与概率流 ODE 的闭式解 $x(t)=\sqrt{v(t)/v(1)}\,x(1)$，并比较少步采样的 NFE–质量关系（实验⑤⑥）。
 5. 把总采样误差拆成分数、离散、先验三部分分别度量（实验⑧），并用 Fokker–Planck 残差诊断 score 质量（实验⑨）。
 6. 把分析迁移到训练得到的网络 score，定量考察离散误差与网络逼近误差的交叉（实验⑩）。
+7. 在二维高斯混合（非线性 score）上重做误差三分解，验证该框架的推广性（实验⑪）。
 
 ### 0.5 全文结构
-Part I 给出理论基础；Part II 讨论误差与收敛（实验①②③）；Part III 讨论稳定性与刚性（实验④）；Part IV 给出改进的采样器（实验⑤⑥⑦）；Part V 是误差预算与 score 诊断（实验⑧⑨⑩）；Part VI 为总结。所有数值函数集中在 `diffusion_na.py`。
+Part I 给出理论基础；Part II 讨论误差与收敛（实验①②③）；Part III 讨论稳定性与刚性（实验④）；Part IV 给出改进的采样器（实验⑤⑥⑦）；Part V 是误差预算与 score 诊断（实验⑧⑨⑩⑪）；Part VI 为总结。所有数值函数集中在 `diffusion_na.py`。
 """)
 
 code(r"""
@@ -633,13 +634,80 @@ md(r"""
 **实验⑩分析.** (a) 机理：精确 score 的纯离散误差以斜率约 $1$ 持续下降（蓝线）；带固定相对偏差 $\rho$ 的合成曲线（橙、绿）在细步区趋平到由 $\rho$ 决定的误差地板（$\rho$ 越大地板越高、细步斜率趋于 $0$），并与蓝线相交，交叉点之后再加步数已无收益。这清楚展示了误差地板与交叉的机理。(b) 对照：黑色叉是实际训练网络的采样误差（在 CPU 上确定性采样，直接测量，而非由 $\hat\rho$ 反推，以免循环论证）。它在本文步数范围内基本随离散曲线下降，还没明显触底；由静态 score 回归得到的等效相对偏差 $\hat\rho\approx-3.6\%$（图例中的 $R^2$ 是这一回归的拟合优度，不是对地板的预测）。值得注意的是 $\hat\rho$ 对应的地板明显高于网络实测最细步的误差，说明这个标量高估了真实采样地板（采样误差沿轨迹部分相消），所以应把 $\hat\rho$ 当作一个上界估计，网络的实际交叉点属于外推。此外，这种把网络误差折成单一相对偏差的做法依赖 score 接近线性，对强非线性 score（如高斯混合或真实数据）未必成立。把 (a)(b) 合起来看，这张图同时给出了步数预算与 score 精度预算之间的关系，可作为"步数加到多少才合适"的定性判断。
 """)
 
+md(r"""
+### §13 推广到非线性 score：高斯混合上的误差三分解
+前面的误差预算（§10）建立在一维高斯上，那里 score 是线性的。为检验同一套分析是否适用于非线性 score，这里把数据换成二维高斯混合（两团各向同性高斯，对应 §2 中给出的闭式 score，已是非线性），重做误差归因。
+
+高斯混合没有单一方差可作解析参照，所以改用切片 Wasserstein 距离（sliced-Wasserstein, SW）来度量分布之间的差异，参照分布取前向核在 $t=\varepsilon$ 处的精确样本 $X_{\rm ref}$（先从数据混合分布采 $x_0$，再按转移核加噪到 $t=\varepsilon$）。与 §10 一样，三个误差源仍然各自独立测量，每次只改动一个因素：
+
+- $d_{\rm prior}$：起点取 $\mathcal N(0,I)$ 与取真边缘 $p(\cdot,1)$ 之差，其余相同，只反映先验失配；
+- $d_{\rm disc}$：精确 score 下粗步与细步之差，同一起点，只反映时间离散；
+- $d_{\rm score}$：粗步下网络 score 与精确 score 之差，步数与起点相同，只反映分数误差。
+
+由于 SW 距离不严格可加，这里仍按量级归因看待（三者之和与实测总误差量级相当，但不要求精确相等）。SW 本身有有限样本带来的噪声地板，下面同时给出该地板作对照，并对每个量做多种子平均。
+""")
+
+code(r"""
+# 实验⑪：二维高斯混合（非线性 score）上的误差三分解
+means_g = np.array([[-1.5, 0.0], [1.5, 0.0]]); weights_g = np.array([0.5, 0.5]); s0g = 0.4
+n_g, N_fine, N_coarse, n_proj = 8000, 200, 20, 600
+
+def _sample_gmm(n, seed):
+    r = np.random.default_rng(seed); c = r.choice(2, size=n, p=weights_g)
+    return means_g[c] + s0g * r.standard_normal((n, 2))
+
+def _fwd_to_eps(x0, seed):          # 前向核加噪到 t=eps
+    r = np.random.default_rng(seed)
+    return dna.alpha(EPS) * x0 + np.sqrt(dna.sigma2(EPS)) * r.standard_normal(x0.shape)
+
+def _true_prior(n, seed):           # 真边缘 p(.,1) 的精确样本
+    r = np.random.default_rng(seed); x0 = _sample_gmm(n, seed + 100)
+    return dna.alpha(1.0) * x0 + np.sqrt(dna.sigma2(1.0)) * r.standard_normal((n, 2))
+
+exact_g = lambda x, t: dna.exact_score_gmm(x, t, means_g, weights_g, s0g)
+X_ref = _fwd_to_eps(_sample_gmm(n_g, 1), 2)                       # 解析参照
+print('训练高斯混合 score 网络 (device=%s) ...' % DEVICE)
+net_g = dna.train_score_net_data(_sample_gmm(3000, 0).astype(np.float32), n_iters=10000, device=DEVICE, seed=0)
+netg = lambda x, t: dna.eval_score_net(net_g, x, t, device=DEVICE)
+
+run = lambda score, N, x0, s: dna.reverse_sample(score, N, 'em', x0=x0, n_samples=n_g, dim=2, eps=EPS, seed=s)
+sw = lambda A, B, s: dna.sliced_wasserstein(A, B, n_proj=n_proj, seed=s)
+K = 3
+floor   = np.mean([sw(_fwd_to_eps(_sample_gmm(n_g, 30 + i), 40 + i), X_ref, i) for i in range(K)])
+d_prior = np.mean([sw(run(exact_g, N_fine, None, s),  run(exact_g, N_fine, _true_prior(n_g, s), s), s) for s in range(K)])
+d_disc  = np.mean([sw(run(exact_g, N_coarse, None, s), run(exact_g, N_fine, None, s), s) for s in range(K)])
+d_score = np.mean([sw(run(netg,    N_coarse, None, s), run(exact_g, N_coarse, None, s), s) for s in range(K)])
+e_total = np.mean([sw(run(netg,    N_coarse, None, s), X_ref, s) for s in range(K)])
+
+fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
+labels = ['SW 噪声地板', '先验失配\n$d_{prior}$', '时间离散\n$d_{disc}$', '分数估计\n$d_{score}$', '实测总误差\n(网络+粗步)']
+vals = [floor, d_prior, d_disc, d_score, e_total]
+ax[0].bar(range(5), vals, color=['#ccc', '#bbb', '#4C72B0', '#C44E52', '#55A868'])
+for i, v in enumerate(vals): ax[0].text(i, v, '%.3f' % v, ha='center', va='bottom', fontsize=8)
+ax[0].set_xticks(range(5)); ax[0].set_xticklabels(labels, fontsize=8)
+ax[0].set_ylabel('sliced-$W$'); ax[0].set_title('实验⑪ 高斯混合误差三分解（非线性 score）')
+Xc = run(netg, N_coarse, None, 0)
+ax[1].scatter(X_ref[:, 0], X_ref[:, 1], s=4, alpha=.3, label='参照 $p(\\cdot,\\varepsilon)$')
+ax[1].scatter(Xc[:, 0], Xc[:, 1], s=4, alpha=.3, label='网络+粗步生成')
+ax[1].set_aspect('equal'); ax[1].legend(); ax[1].set_title('生成样本 vs 参照')
+plt.tight_layout(); plt.savefig('figures/fig13_gmm_budget.png', bbox_inches='tight'); plt.show()
+print('floor=%.4f  d_prior=%.4f  d_disc=%.4f  d_score=%.4f  e_total=%.4f  三源和=%.4f'
+      % (floor, d_prior, d_disc, d_score, e_total, d_prior + d_disc + d_score))
+assert d_disc > 1.5 * floor and d_score > 1.5 * floor      # 离散、分数误差均显著高于噪声地板
+assert d_prior < d_disc and d_prior < d_score              # 先验失配最小
+""")
+
+md(r"""
+**实验⑪分析.** 在二维高斯混合上，三个误差源依旧能分离开：先验失配 $d_{\rm prior}$ 落在 SW 噪声地板附近，可以忽略；时间离散 $d_{\rm disc}$ 与分数估计 $d_{\rm score}$ 都明显高于地板，是主要来源，两者量级相当。值得注意的是，与一维线性情形相比，这里 $d_{\rm score}$ 已上升到与 $d_{\rm disc}$ 同一量级（不再像线性情形那样远小于离散误差），说明网络拟合多峰、非线性的 score 要比拟合线性 score 困难得多。右图也能看到，网络在粗步下生成的样本大体复原了两团结构，但团内偏胖、团间有少量散点，正对应这部分分数误差。可见 §10 的误差预算框架不局限于可解析的高斯设定，在非线性 score 下同样适用，只是各项的相对大小会随问题改变。
+""")
+
 # ======================================================================
 # Part VI 总结
 # ======================================================================
 md(r"""
 ## Part VI　总结与展望
 
-### §13 结论
+### §14 结论
 本文把扩散模型的反向采样当作数值积分问题来处理，在可解析的高斯设定下得到了下面这些可与解析值对照的结果：
 
 1. 用后向误差分析给出反向 EM 在生成分布方差上的领头阶 $O(h)$ 偏差系数，与 Richardson 外推吻合到相对误差约 $7.5\times10^{-6}$，由此明确了 EM 实际在求解哪条被修正的方程。
@@ -648,6 +716,7 @@ md(r"""
 4. 给出半隐式/指数法（降低误差常数）、Richardson 外推（提阶）以及概率流 ODE 的闭式解 $x\propto\sqrt v$，并指出单纯指数化的局限。
 5. 把总采样误差分解为分数、离散、先验三项分别度量，并用 FPE 残差诊断 score 质量。
 6. 把分析迁移到训练网络 score，定量考察离散误差与网络逼近误差的交叉。
+7. 在二维高斯混合（非线性 score）上重复误差三分解，验证该框架不限于可解析的高斯情形；此时分数估计误差上升到与时间离散误差相当的量级。
 
 ### 与 DPM-Solver 等方法的联系
 DPM-Solver、DEIS 等少步采样器的核心，正是对半线性概率流 ODE 的线性漂移做指数（变易常数）积分。本文在高斯设定下给出了这条 ODE 的闭式解和收敛阶，也说明少步采样的收益主要来自这条 ODE 不受稳定域约束以及高阶格式，而不是单纯把漂移指数化。
