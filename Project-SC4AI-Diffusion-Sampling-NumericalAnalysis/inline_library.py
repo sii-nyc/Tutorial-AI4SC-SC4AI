@@ -16,7 +16,7 @@ if any("_DIFFUSION_NA_SRC" in c.source for c in nb.cells if c.cell_type == "code
     print("already inlined; skip")
 else:
     inline = (
-        "# === 工具区：内联核心库 diffusion_na（使本 notebook 单文件自包含；每个解析公式均有数值核验）===\n"
+        "# === 工具区：内联核心库 diffusion_na（使本 notebook 单文件自包含；核心解析公式均有数值核验）===\n"
         "# 说明：下方字符串即 diffusion_na.py 全部源码；执行后注册为模块 dna，后续 `import diffusion_na as dna` 直接可用。\n"
         "import types as _types, sys as _sys\n"
         "_DIFFUSION_NA_SRC = " + repr(src) + "\n"
