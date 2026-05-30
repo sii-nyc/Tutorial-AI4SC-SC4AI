@@ -4,12 +4,19 @@
 运行: .venv/bin/python build_notebook.py  ->  反向扩散采样的数值分析.ipynb
 再执行: .venv/bin/python -m jupyter nbconvert --to notebook --execute --inplace ...
 """
+import os
 import nbformat as nbf
 
 nb = nbf.v4.new_notebook()
 cells = []
 def md(s):   cells.append(nbf.v4.new_markdown_cell(s.strip("\n")))
 def code(s): cells.append(nbf.v4.new_code_cell(s.strip("\n")))
+
+# 读取核心库源码，直接以普通代码单元嵌入 notebook（使其单文件自包含、无需外部 .py）
+_LIB_SRC = open(os.path.join(os.path.dirname(__file__) or ".", "diffusion_na.py"),
+                encoding="utf-8").read()
+# 去掉 from __future__ import（嵌入为非首单元时该语句对位置敏感，本库并不需要它）
+_LIB_SRC = _LIB_SRC.replace("from __future__ import annotations\n", "")
 
 # ======================================================================
 # 标题
@@ -57,7 +64,21 @@ $$\mathrm{d}X_t = -\tfrac12\beta(t)X_t\,\mathrm{d}t + \sqrt{\beta(t)}\,\mathrm{d
 7. 在二维高斯混合（非线性 score）上重做误差三分解，验证该框架的推广性（实验⑪）。
 
 ### 0.5 全文结构
-Part I 给出理论基础；Part II 讨论误差与收敛（实验①②③）；Part III 讨论稳定性与刚性（实验④）；Part IV 给出改进的采样器（实验⑤⑥⑦）；Part V 是误差预算与 score 诊断（实验⑧⑨⑩⑪）；Part VI 为总结。所有数值函数集中在 `diffusion_na.py`。
+Part I 给出理论基础；Part II 讨论误差与收敛（实验①②③）；Part III 讨论稳定性与刚性（实验④）；Part IV 给出改进的采样器（实验⑤⑥⑦）；Part V 是误差预算与 score 诊断（实验⑧⑨⑩⑪）；Part VI 为总结。所有数值函数集中在下一节"核心数值库"单元中，本 notebook 单文件即可运行。
+""")
+
+md(r"""
+## 核心数值库
+
+下面这个代码单元集中定义全文用到的所有数值函数：噪声调度与边缘分布、解析 score（高斯与高斯混合）、反向动力学与精确方差、Euler–Maruyama 与半隐式/概率流采样器、各类度量（Bures-$W_2$、矩误差、sliced-Wasserstein）、刚性与稳定域、Fokker–Planck 残差，以及一个用于网络迁移实验的小 score 网络。它不依赖任何外部文件，使本 notebook 单文件即可运行；后续各实验单元通过命名空间 `dna` 调用其中的函数（`dna` 即本单元所在的命名空间）。
+""")
+
+code(_LIB_SRC + """
+
+# 将本单元定义的全部函数与常量收拢到命名空间 dna，供后续实验单元调用
+import sys as _sys
+dna = _sys.modules[__name__]
+print("核心数值库就绪")
 """)
 
 code(r"""
@@ -68,7 +89,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import torch
-import diffusion_na as dna
 
 # 中文字体（macOS 自带优先）
 _avail = {f.name for f in fm.fontManager.ttflist}
@@ -734,10 +754,9 @@ md(r"""
 ## 附录
 
 ### A. 复现说明
-- 环境：`uv` 隔离（Python 3.12，torch MPS，numpy/scipy/matplotlib/scikit-learn）。
-- 运行：`uv sync` 后选 `Python (diffusion-na)` 内核，"运行全部"；或 `uv run jupyter nbconvert --to notebook --execute --inplace 反向扩散采样的数值分析.ipynb`。
-- 全局随机种子 `SEED=2026`；图保存在 `figures/`。
-- 核心数值函数集中在 `diffusion_na.py`（已内联进本 notebook 顶部"工具区"，单文件即可运行）。
+- 依赖：Python 3.12 与 `numpy`、`scipy`、`matplotlib`、`scikit-learn`、`torch`（CPU 即可，无需 GPU/CUDA）。
+- 运行：直接"运行全部"即可；本 notebook 单文件自包含，所有数值函数定义在前面的"核心数值库"单元中，不依赖任何外部文件。
+- 全局随机种子 `SEED=2026`；解析与确定性实验为 NumPy 运算、逐位可复现；网络 score 实验默认在 CPU 上训练（亦逐位可复现）。
 
 ### B. 关键超参数
 | 项 | 值 |
