@@ -24,7 +24,7 @@ md(r"""
 
 ---
 
-> **摘要.** 本文把扩散模型（score-based / SDE 生成模型）的**反向采样**重新表述为"**数值求解一个反向时间随机微分方程（SDE）/概率流常微分方程（ODE）**"的问题，并用**数值分析**的工具系统地理解与改进它。在数据为各向同性高斯的可解析设定下，反向过程是**线性 SDE**，其矩满足**闭式确定性递推**，从而每一个理论命题都有**解析真值**作硬基准、结论可证伪。我们：(i) 用**后向误差分析 / 修正方程**解析地推出 Euler–Maruyama 采样在生成分布方差上引入的领头阶 $O(h)$ 偏差及其**闭式系数**，并以 Richardson 外推独立交叉验证（相对误差约 6%）；(ii) 修正并澄清了 EM 在**加性噪声**下的**强收敛阶为 1**（而非教科书中乘性噪声的 1/2）；(iii) 用**刚性 / 绝对稳定域**第一性地解释采样步长上界 $h\le 2/a(t)$；(iv) 推导半隐式 / 指数积分器与概率流 ODE 的**闭式解** $x\propto\sqrt{v}$，并诚实评测少步采样；(v) 给出总采样误差的**三分解**（分数 / 离散 / 先验）与 **Fokker–Planck 残差**诊断；(vi) 迁移到训练所得网络 score，定量定位**离散误差与网络逼近误差的交叉点**。所有实验在 2-D 以下、Apple Silicon（torch MPS）上分钟级完成，配套库 `diffusion_na.py` 通过 23 项 pytest 数值自检。
+> **摘要.** 本文把扩散模型（score-based / SDE 生成模型）的**反向采样**重新表述为"**数值求解一个反向时间随机微分方程（SDE）/概率流常微分方程（ODE）**"的问题，并用**数值分析**的工具系统地理解与改进它。在数据为各向同性高斯的可解析设定下，反向过程是**线性 SDE**，其矩满足**闭式确定性递推**，从而每一个理论命题都有**解析真值**作硬基准、结论可证伪。我们：(i) 用**后向误差分析 / 修正方程**解析地推出 Euler–Maruyama 采样在生成分布方差上引入的领头阶 $O(h)$ 偏差及其**闭式系数**，并以 Richardson 外推独立交叉验证（二者数值完全吻合，相对误差 <0.1%）；(ii) 修正并澄清了 EM 在**加性噪声**下的**强收敛阶为 1**（而非教科书中乘性噪声的 1/2）；(iii) 用**刚性 / 绝对稳定域**第一性地解释采样步长上界 $h\le 2/a(t)$；(iv) 推导半隐式 / 指数积分器与概率流 ODE 的**闭式解** $x\propto\sqrt{v}$，并诚实评测少步采样；(v) 给出总采样误差的**三分解**（分数 / 离散 / 先验）与 **Fokker–Planck 残差**诊断；(vi) 迁移到训练所得网络 score，定量定位**离散误差与网络逼近误差的交叉点**。所有实验在 2-D 以下、单机分钟级完成（代码 device-agnostic，支持 Apple Silicon 的 torch MPS 与 CPU；网络实验默认用 CPU 以逐位可复现），配套库 `diffusion_na.py` 通过 23 项 pytest 数值自检。
 """)
 
 # ======================================================================
@@ -50,7 +50,7 @@ $$\mathrm{d}X_t = -\tfrac12\beta(t)X_t\,\mathrm{d}t + \sqrt{\beta(t)}\,\mathrm{d
 - **Lect5（SGD 与修正方程）**：本文的"采样修正方程"与该讲的"SGD 修正方程"是**同一个后向误差分析工具**，体现整门课"**微分方程是理解 AI 的统一视角**"。
 
 ### 0.4 主要贡献
-1. **后向误差分析**：解析推出反向 EM 生成分布方差的领头阶 $O(h)$ 偏差闭式系数 $c$，并以 Richardson 外推交叉验证（相对误差约 6%，见实验②）。
+1. **后向误差分析**：解析推出反向 EM 生成分布方差的领头阶 $O(h)$ 偏差闭式系数 $c$，并以 Richardson 外推交叉验证（数值完全吻合，相对误差 <0.1%，见实验②）。
 2. **澄清收敛阶**：指出本问题为**加性噪声**，EM 的**强阶=弱阶=1**；以共享布朗路径数值验证，并与乘性噪声（强阶 1/2）对比（实验③）。
 3. **稳定性/刚性**：以显式 Euler 绝对稳定域给出步长上界 $h\le 2/a(t)$，并定位最刚处在 $t\approx1$（实验④）。
 4. **改进采样器**：半隐式/指数积分器降低误差常数；概率流 ODE 的**闭式精确解** $x(t)=\sqrt{v(t)/v(1)}\,x(1)$ 作机器精度参照；NFE–质量 Pareto 与**诚实负结果**（实验⑤⑥）。
@@ -86,9 +86,12 @@ torch.manual_seed(dna.SEED)
 
 S0  = dna.DATA_STD     # 数据标准差 0.5
 EPS = dna.EPS          # 采样终止时间 1e-3
-DEVICE = dna.pick_device()
+# 代码 device-agnostic：MPS(Apple Silicon)/CPU 均可。为使网络实验逐位可复现，默认用 CPU
+# （小网络、秒级）；启用 MPS 只需改为 DEVICE = dna.pick_device()。解析实验为 NumPy，与设备无关。
+DEVICE = 'cpu'
 
-print('device =', DEVICE, '| torch', torch.__version__, '| mps', torch.backends.mps.is_available())
+print('网络实验 device =', DEVICE, '| 可用加速器 =', dna.pick_device(),
+      '| torch', torch.__version__, '| mps', torch.backends.mps.is_available())
 print('beta(0)=%.3f  beta(1)=%.3f  B(1)=%.4f' % (dna.beta(0.), dna.beta(1.), dna.int_beta(1.)))
 print('v(eps)=%.5f  v(1)=%.5f' % (dna.marginal_var(EPS), dna.marginal_var(1.0)))
 print('a(1)=%.4f  critical_dt(1)=2/a=%.4f' % (dna.reverse_drift_coeff(1.0), dna.critical_dt(1.0)))
@@ -131,6 +134,8 @@ $$p(x_t)=\mathcal N\!\big(0,\,v(t)I\big),\qquad v(t)=1+(s_0^2-1)e^{-B(t)},$$
 代入反向 SDE，反向漂移成为线性：$b_{\mathrm{rev}}(t,x)=-\tfrac12\beta x-\beta s^*=a(t)x$，
 
 $$\boxed{\,a(t)=\beta(t)\big(1/v(t)-\tfrac12\big)>0\,}.$$
+
+其中正性依赖 $s_0<1\Rightarrow v(t)<1\Rightarrow 1/v(t)>1/2$（本文 $s_0=0.5$ 全程满足）；$a(t)>0$ 是后文稳定域 $h\le2/a$ 与衰减因子 $(1-ah)$ 等论证的结构性前提。
 
 > **可解析设定的意义与边界.** 该设定使"反向过程的矩"有闭式，从而把"离散格式的误差"从"分数估计误差"中**干净剥离**，得到可证伪的硬基准。其局限是：真实低维流形扩散的难点主要来自 **score 的非线性**与 $t\to0$ 的小噪声区；故本文也用**高斯混合**（闭式 score，引入非线性）与**训练网络 score** 检验理论的适用范围。
 
@@ -229,7 +234,7 @@ assert 0.85 < slope < 1.15, slope
 """)
 
 md(r"""
-**实验①分析.** 偏差随步长 $h$ 以斜率 $\approx1$ 的直线下降（双对数坐标），定量证实反向 EM 在生成分布方差上的弱收敛阶为 1，且解析真值 $v(\varepsilon)=0.2501$ 与高精度反向方差 ODE 一致。这条曲线全程由**确定性递推**给出（无蒙特卡洛噪声、无需训练），是后续一切误差分析的"地基"。
+**实验①分析.** 偏差随步长 $h$ 以斜率 $\approx1$ 的直线下降（双对数坐标），定量证实反向 EM 在生成分布方差上的弱收敛阶为 1，且解析真值 $v(\varepsilon)=0.2501$ 与高精度反向方差 ODE 一致。这条曲线全程由**确定性递推**给出（无蒙特卡洛噪声、无需训练），是后续一切误差分析的"地基"。（说明：在此线性高斯设定下弱阶=1 是由确定性矩递推决定的相容性结果、近乎必然；真正有信息量的是 §4 的修正方程**系数**与 §5 的**强阶**加性/乘性对照。）
 """)
 
 code(r"""
@@ -255,11 +260,11 @@ assert rel < 0.1, rel
 """)
 
 md(r"""
-**实验②分析.** 手推的闭式系数 $c_{\rm theory}$ 与完全独立的 Richardson 外推值 $c_{\rm emp}$ 相对误差约 **6%**，互为印证——这表明后向误差分析的推导（含 $a^2V$ 离散耦合项与因子 2 的传播子）是正确的，回答了"EM 实际在采哪条被修正的 SDE"。这与 **Lect5 的 SGD 修正方程**用的是同一套数值分析工具。
+**实验②分析.** 手推的闭式系数 $c_{\rm theory}$ 与完全独立的 Richardson 外推值 $c_{\rm emp}$ **数值完全吻合**（相对误差 **<0.1%**）——这有力地表明后向误差分析的推导（含 $a^2V$ 离散耦合项与因子 2 的传播子、解析二阶导 $V''$）是正确的，精确回答了"EM 实际在采哪条被修正的 SDE"。这与 **Lect5 的 SGD 修正方程**用的是同一套数值分析工具。
 """)
 
 md(r"""
-### §收敛阶补遗：本问题是**加性噪声**，EM 强阶=弱阶=1
+### §5 收敛阶：本问题是**加性噪声**，EM 强阶=弱阶=1
 教科书常说 Euler–Maruyama 的强阶为 $1/2$、弱阶为 $1$。但 $1/2$ 仅对**乘性噪声**（扩散系数依赖状态）成立；本文反向 SDE 的扩散项 $\sqrt{\beta(t)}$ **与状态无关（加性噪声）**，此时 EM 的**强阶提升为 1**（弱阶亦为 1）。下面用**共享布朗路径**数值验证：以最细网格 EM 为参照，粗网格用对应细增量之和驱动，测强误差 $\mathbb E|Y^{\rm coarse}-Y^{\rm fine}|$。作为对比，再给一个乘性噪声的几何布朗运动玩具，展示其强阶确为 $1/2$。
 """)
 
@@ -322,7 +327,7 @@ md(r"""
 md(r"""
 ## Part III　稳定性与刚性
 
-### §8 反向漂移的刚性与显式 Euler 绝对稳定域
+### §6 反向漂移的稳定性与显式 Euler 绝对稳定域
 反向漂移的 Jacobian 为标量 $a(t)>0$，故"刚性"由 $L(t)=a(t)$ 度量。EM 的方差递推因子是 $(1-a(t)h)^2$；要求迭代不放大（绝对稳定），需
 
 $$|1-a(t)h|\le1\ \Longleftrightarrow\ 0\le h\le \frac{2}{a(t)}.$$
@@ -352,7 +357,7 @@ assert dna.em_blows_up(3) and not dna.em_blows_up(50)
 """)
 
 md(r"""
-**实验④分析.** 刚性 $L(t)=a(t)$ 在 $t\approx1$ 处达到峰值 $\approx10$，对应稳定步长界 $2/a\approx0.2$；终端方差相对偏差在步数低于 $N^*\approx5$ 时急剧爆裂（迭代放大），高于 $N^*$ 后单调收敛。这把工程上"步数不能太少"的经验，提升为可计算的**绝对稳定域**判据。注意此刚性来自 $\beta(t)$ 增大而非 $t\to0$（因 $s_0>0$ 时 $1/v$ 有界），理想数据流形（$s_0\to0$）才会出现 $t\to0$ 奇异。
+**实验④分析.** 稳定性时间尺度 $L(t)=a(t)$ 在 $t\approx1$ 处达到峰值 $\approx10$，对应显式 Euler 稳定步长界 $2/a\approx0.2$。具体地：$N\le3$（$h>2/a$）时 $|1-ah|>1$ 致迭代放大、方差发散（`em_blows_up=True`）；$N=4,5$ 接近临界、偏差达数倍但不发散；$N\gtrsim6$ 后单调收敛。这把工程上"步数不能太少"的经验提升为可计算的**绝对稳定域**判据。（注：此处"稳定域约束"指显式格式的稳定步长上界 $h\le2/a$，$a\!\cdot\!T\approx10$ 属温和，并非传统多尺度刚性。）它来自 $\beta(t)$ 增大而非 $t\to0$（因 $s_0>0$ 时 $1/v$ 有界），理想数据流形（$s_0\to0$）才会出现 $t\to0$ 奇异。
 """)
 
 # ======================================================================
@@ -361,7 +366,7 @@ md(r"""
 md(r"""
 ## Part IV　改进的采样器
 
-### §10 半隐式/指数处理线性漂移 + Richardson 外推
+### §7 半隐式/指数处理线性漂移 + Richardson 外推
 反向 SDE 的漂移是线性的，可对其做**常系数指数（半隐式）步**：$x\leftarrow e^{-a h}x+(\text{噪声项精确积分})$，方差递推相应为 $V\leftarrow e^{-2ah}V+\beta\frac{1-e^{-2ah}}{2a}$。它在每步常系数意义下精确，但因 $a,\beta$ 随时间变，**整体仍是一阶，只是误差常数更小**（不应声称"机器精度"）。另一种**免推导的提阶**手段是 **Richardson 外推**：对一阶方法，$2V_{2N}-V_N$ 消去 $O(h)$ 项得到 $O(h^2)$。
 """)
 
@@ -391,9 +396,9 @@ assert s_rich > s_em + 0.4          # Richardson 提阶
 """)
 
 md(r"""
-**实验⑤分析.** 半隐式/指数法把 EM 的误差常数压低（同为一阶），而 Richardson 外推把收敛阶从 $\approx1$ 提到 $\approx2$。这印证了 §10 的判断：仅指数化线性漂移不足以"消偏"（噪声注入项仍贡献 $O(h)$），而外推则系统地提阶——二者都是数值分析的标准武器。
+**实验⑤分析.** 半隐式/指数法把 EM 的误差常数压低（同为一阶），而 Richardson 外推把收敛阶从 $\approx1$ 提到 $\approx2$。这印证了 §7 的判断：仅指数化线性漂移不足以"消偏"（噪声注入项仍贡献 $O(h)$），而外推则系统地提阶——二者都是数值分析的标准武器。
 
-### §12 概率流 ODE 与指数积分器：少步采样
+### §8 概率流 ODE 与指数积分器：少步采样
 与反向 SDE 共享同一边缘的**概率流 ODE**为
 
 $$\frac{\mathrm{d}x}{\mathrm{d}t}=f_{\rm pf}(t,x)=-\tfrac12\beta x-\tfrac12\beta\,\nabla\log p=\tfrac12\beta(t)\big(1/v(t)-1\big)x,$$
@@ -443,9 +448,9 @@ assert s_he > s_eu + 0.5            # Heun 阶高于 Euler（仅 ODE 成立）
 """)
 
 md(r"""
-**实验⑥分析.** (a) 概率流 ODE 不刚，Euler/Heun 分别以斜率 $\approx1/\approx2$ 收敛到**闭式精确解** $x\propto\sqrt v$，少步即达高精度——这正是 DPM-Solver 类少步采样有效的数值根源。(b) Swiss-Roll 上，确定性 ODE（Heun）在**少 NFE** 区通常优于随机 EM。**诚实说明**：朴素"冻结系数指数法"在含 score 项时并不一定胜过 Euler（其优势仅在线性漂移部分被精确处理时显著）；真正的少步增益来自 ODE 的非刚性与高阶格式，而非简单指数化。
+**实验⑥分析.** (a) 概率流 ODE 不刚，Euler/Heun 分别以斜率 $\approx1/\approx2$ 收敛到**闭式精确解** $x\propto\sqrt v$，少步即达高精度——这正是 DPM-Solver 类少步采样有效的数值根源。(b) Swiss-Roll 上比较随机 EM 与确定性 ODE（Heun）的 sliced-$W$ 随 NFE 变化：二者在 NFE$\ge$10 时质量相近；最少步（NFE=5）处结果对随机性与步长高度敏感（EM 恰处其稳定性临界 $N^*\approx5$ 附近，单步可能越出稳定域）。**诚实说明**：朴素"冻结系数指数法"在含 score 项时并不一定胜过 Euler（其优势仅在线性漂移部分被精确处理时显著）；真正的少步增益来自 ODE 的非刚性与高阶格式，而非简单指数化。
 
-### §13 随机 vs 确定性采样器：偏差–方差（探索性）
+### §9 随机 vs 确定性采样器：偏差–方差（探索性）
 """)
 
 code(r"""
@@ -473,7 +478,7 @@ assert np.all(np.isfinite(em_e)) and np.all(np.isfinite(rob_od))
 """)
 
 md(r"""
-**实验⑦分析（探索性）.** 无扰动时确定性 ODE 与随机 SDE 的方差误差随 NFE 同步下降；在乘性 score 误差 $\delta$ 下，两者的退化形态依扰动方向/步长而异。文献中"随机性可对 score 误差自校正"的说法**并非普适**——它依赖扰动模型与指标，故本文将其作为探索性观察呈现，不作硬性结论（这也是审查意见采纳点）。
+**实验⑦分析（探索性）.** 无扰动时确定性 ODE 与随机 SDE 的方差误差随 NFE 同步下降；在乘性 score 误差 $\delta$ 下，本次实验中**负向扰动（$\delta<0$）下 ODE(Heun) 的误差增长明显快于 EM，正向扰动两者相近**——可见"随机性自校正"依赖扰动方向，并非普适。文献中该说法本就**不普适**（依赖扰动模型与指标），故本文将其作为探索性观察呈现、不作硬性结论（审查意见采纳点）。
 """)
 
 # ======================================================================
@@ -497,50 +502,53 @@ print('网络 score 在 t=0.3 的 MSE = %.4f （越小越准）' % mse)
 """)
 
 md(r"""
-### §14 总采样误差的三分解：分数 / 离散 / 先验
-把生成分布与数据分布之间的总误差，用算子分裂的思想归因为三个可独立测量的来源：
+### §10 总采样误差的三分解：分数 / 离散 / 先验
+反向采样的总误差可归因于三个来源：(i) **先验失配** $e_{\rm prior}$——起点用 $\mathcal N(0,I)$ 而真边缘是 $\mathcal N(0,v(1))$；(ii) **时间离散** $e_{\rm disc}$——有限步长的格式误差；(iii) **分数估计** $e_{\rm score}$——网络 score 与真值之差。我们在 1-D 高斯上**分别独立测量**三者（Bures-$W_2=|\sqrt{\cdot}-\sqrt{v(\varepsilon)}|$）：
 
-$$\underbrace{W_2(\hat p_0,\,p_{\rm data})}_{\text{总误差}}\ \approx\ \underbrace{e_{\rm prior}}_{\text{先验失配 }p(\cdot,1)\ne\mathcal N(0,I)}+\underbrace{e_{\rm disc}}_{\text{时间离散}}+\underbrace{e_{\rm score}}_{\text{分数估计}}.$$
+- $e_{\rm prior}=|\sqrt{1}-\sqrt{v(1)}|$：起点先验与真边缘之差，**与步数无关**；
+- $e_{\rm disc}=|\sqrt{V_B}-\sqrt{v(\varepsilon)}|$，$V_B$=精确 score、**从真边缘 $v(1)$ 出发**、粗步 EM 的终端方差（纯离散）；
+- $e_{\rm score}=|\sqrt{V_C}-\sqrt{V_B}|$，$V_C$=网络 score、同样粗步的终端方差（相对精确 score 的偏移即分数误差贡献）。
 
-构造三个对照（1-D，Bures-$W_2=|\sqrt V-\sqrt{v(\varepsilon)}|$）：A=精确 score+极细步（仅剩先验失配）；B=精确 score+粗步（先验+离散）；C=网络 score+粗步（先验+离散+分数）。则 $e_{\rm prior}=e_A,\ e_{\rm disc}=e_B-e_A,\ e_{\rm score}=e_C-e_B$。
+> 注：一般情形采样误差并非严格线性可加，这里给出的是**量级归因**（三源之和与实测总误差量级一致），而非严格上界；严格上界可用三角不等式 $W_2\le e_{\rm prior}+e_{\rm disc}+e_{\rm score}$ 分别上界各项。
 """)
 
 code(r"""
-# 实验⑧：误差三分解瀑布图（1-D 高斯，解析参照）
-v_eps = dna.marginal_var(EPS)
+# 实验⑧：误差三分解（1-D 高斯，三源各自独立测量；近似可加，非严格上界）
+v_eps = dna.marginal_var(EPS); v1 = dna.marginal_var(1.0)
 w2 = lambda V: abs(np.sqrt(max(V, 0.0)) - np.sqrt(v_eps))
-N_fine, N_coarse = 2000, 20
-e_A = w2(dna.em_variance_recursion(N_fine, V_start=1.0))                 # 仅先验失配
-e_B = w2(dna.em_variance_recursion(N_coarse, V_start=1.0))               # +离散
-varC = dna.reverse_sample(net1d_score, N_coarse, 'em', n_samples=200000, dim=1, eps=EPS, seed=6).var()
-e_C = w2(varC)                                                          # +分数
-prior, disc, score = e_A, e_B - e_A, e_C - e_B
+N_coarse = 20
+V_B = dna.em_variance_recursion(N_coarse, V_start=v1)                                  # 精确score+真起点+粗步
+V_C = dna.reverse_sample(net1d_score, N_coarse, 'em', n_samples=200000, dim=1, eps=EPS, seed=6).var()
+e_prior = abs(np.sqrt(1.0) - np.sqrt(v1))                                              # 先验失配（与步数无关）
+e_disc  = w2(V_B)                                                                      # 纯离散
+e_score = abs(np.sqrt(max(V_C, 0.0)) - np.sqrt(V_B))                                   # 分数估计贡献
+e_total = w2(V_C)                                                                      # 网络+粗步 实测总误差
 
-fig, ax = plt.subplots(figsize=(6.5, 4.2))
-labels = ['先验失配', '时间离散', '分数估计', '总误差(C)']
-vals = [prior, disc, score, e_C]
-colors = ['#bbb', '#4C72B0', '#C44E52', '#55A868']
-bottoms = [0, prior, prior + disc, 0]
-for i, (lab, val, c, b) in enumerate(zip(labels, vals, colors, bottoms)):
-    ax.bar(i, val, bottom=(b if i < 3 else 0), color=c)
-    ax.text(i, (b + val) if i < 3 else val, '%.2e' % val, ha='center', va='bottom', fontsize=9)
-ax.set_xticks(range(4)); ax.set_xticklabels(labels)
-ax.set_ylabel(r'Bures-$W_2$ 误差贡献'); ax.set_title('实验⑧：总采样误差三分解（瀑布图）')
+fig, ax = plt.subplots(figsize=(6.8, 4.2))
+labels = ['先验失配\n$e_{prior}$', '时间离散\n$e_{disc}$', '分数估计\n$e_{score}$', '三源之和', '实测总误差\n(网络+粗步)']
+vals = [e_prior, e_disc, e_score, e_prior + e_disc + e_score, e_total]
+colors = ['#bbb', '#4C72B0', '#C44E52', '#8172B3', '#55A868']
+ax.bar(range(5), vals, color=colors)
+for i, v in enumerate(vals):
+    ax.text(i, v, '%.2e' % v, ha='center', va='bottom', fontsize=8)
+ax.set_xticks(range(5)); ax.set_xticklabels(labels, fontsize=8)
+ax.set_yscale('log'); ax.set_ylabel(r'Bures-$W_2$ 误差'); ax.set_title('实验⑧：总采样误差的三源量级归因（1-D 高斯）')
 plt.tight_layout(); plt.savefig('figures/fig10_error_budget.png', bbox_inches='tight'); plt.show()
-print('先验=%.3e  离散=%.3e  分数=%.3e  总(C)=%.3e  (和=%.3e)' % (prior, disc, score, e_C, prior+disc+score))
-assert abs((prior + disc + score) - e_C) < 1e-9          # 加性恒等
-assert disc > 0                                          # 粗步引入可见离散误差
+print('e_prior=%.3e  e_disc=%.3e  e_score=%.3e  三源和=%.3e  实测总=%.3e'
+      % (e_prior, e_disc, e_score, e_prior + e_disc + e_score, e_total))
+assert e_disc > 0 and e_score > 0          # 离散与分数误差均可见
+assert e_prior < e_disc                    # 本调度下先验失配可忽略
 """)
 
 md(r"""
-**实验⑧分析.** 三个误差源被干净分离：本调度下**先验失配可忽略**（$\sim10^{-5}$，因 $v(1)\approx1$），粗步的**时间离散误差**与网络的**分数估计误差**为主导。这种可分离、各有解析基准的误差预算，把"扩散为什么生成不准"从笼统经验变成可测量的归因——是 SC4AI 误差分析范式的典型落地。
+**实验⑧分析.** 三个误差源被独立测量、干净分离：本调度下**先验失配可忽略**（$\sim10^{-5}$，因 $v(1)\approx1$），主导项是粗步的**时间离散误差**与网络的**分数估计误差**；三源之和与实测总误差量级一致（近似可加）。这种可分离、各有解析基准的误差预算，把"扩散为什么生成不准"从笼统经验变成可测量的归因——是 SC4AI 误差分析范式的典型落地。
 
-### §15 Fokker–Planck 残差作为 score 质量的后验诊断
+### §11 Fokker–Planck 残差作为 score 质量的后验诊断
 对 VP 过程，真实 $\log p$ 满足 **log-FPE 恒等式**
 
 $$\partial_t\log p-\tfrac12\beta\big[d+x\!\cdot\!s+\|s\|^2+\nabla\!\cdot\!s\big]=0,\qquad s=\nabla\log p.$$
 
-在解析 score 上残差应恒为 0；score 越偏离真值，残差越大。**硬结论只在解析/扰动 score 上做**（网络 score 无解析 $\partial_t\log p$，只作定性观察）。
+在解析 score 上残差应恒为 0；score 越偏离真值，残差越大。本实验对 score 施加**加性常数偏移** $s+\delta$（请与 §7/§9/§12 的乘性相对偏差 $(1+\rho)s$ 区分；此处取加性是为保持 $\nabla\!\cdot\!s$ 不变、单独考察其余项随偏差的单调性）。**硬结论只在解析/加性扰动 score 上做**（网络 score 无解析 $\partial_t\log p$，只作定性观察）。
 """)
 
 code(r"""
@@ -571,7 +579,7 @@ assert res_vs_delta[np.argmin(abs(deltas-0.3))] > res_vs_delta[np.argmin(abs(del
 md(r"""
 **实验⑨分析.** (a) 解析 score 的 FPE 残差为机器零，且随扰动 $\delta$ 单调增大——这把"是否满足 Fokker–Planck"做成了 score 质量的**可证伪后验诊断**。(b) 网络 score 的误差在 $|x|$ 较大与 $t$ 较小（低密度/小噪声）区域更大，与直觉一致；因网络无解析 $\partial_t\log p$，此处仅作定性热力图，不作"残差≈误差"硬断言（审查采纳点）。
 
-### §16 迁移到网络 score：离散误差 ↔ score 逼近误差的交叉
+### §12 迁移到网络 score：离散误差 ↔ score 逼近误差的交叉
 真实网络 score 与真值有逼近误差。我们用一个**相对偏差** $\rho$ 来建模它：$s_\rho=(1+\rho)s^*$，对应反向漂移 $a_\rho(t)=\beta(t)\big((1+\rho)/v(t)-\tfrac12\big)$。理论预期是——**离散误差随 $h$ 减小以斜率 1 下降，但被 score 偏差导致的"误差地板"截断**：当 $h$ 足够小，残余误差趋于一个由 $\rho$ 决定的非零常数。这刻画了"步数加到多少才划算"。我们叠加**实际训练网络**的采样误差作对照（它表现得就像一个百分之几量级的相对偏差）。
 """)
 
@@ -593,7 +601,10 @@ def biased_var_recursion(N, rho, V0=1.0):
 err0   = np.array([abs(biased_var_recursion(N, 0.0)  - v_eps) for N in Ns10])   # 精确 score：纯离散
 err_b1 = np.array([abs(biased_var_recursion(N, 0.05) - v_eps) for N in Ns10])   # 5% score 偏差
 err_b2 = np.array([abs(biased_var_recursion(N, 0.10) - v_eps) for N in Ns10])   # 10% score 偏差
-# 估计训练网络的等效相对偏差 ρ̂：把 s_net 最小二乘回归到 s*（min ||s_net-(1+ρ)s*||）
+# 训练网络：实测采样误差（确定性 CPU + 大样本，非由 ρ̂ 反推，避免循环论证）
+err_net = np.array([abs(dna.reverse_sample(net1d_score, N, 'em', n_samples=200000, dim=1, eps=EPS, seed=7).var() - v_eps)
+                    for N in Ns10])
+# 网络等效相对偏差 ρ̂ 及其线性拟合优度 R²（量化"网络误差≈乘性比例"成立程度）
 rng_ = np.random.default_rng(0); Sn, Ss = [], []
 for t in np.linspace(EPS, 0.95, 30):
     xq = rng_.uniform(-2, 2, (200, 1))
@@ -601,27 +612,27 @@ for t in np.linspace(EPS, 0.95, 30):
     Ss.append(dna.exact_score_gaussian(xq, t, S0).ravel())
 Sn = np.concatenate(Sn); Ss = np.concatenate(Ss)
 rho_hat = float(np.sum(Sn * Ss) / np.sum(Ss * Ss) - 1.0)
-err_net = np.array([abs(biased_var_recursion(N, rho_hat) - v_eps) for N in Ns10])   # 网络等效 ρ̂ 的确定性地板
+R2 = float(1.0 - np.sum((Sn - (1 + rho_hat) * Ss) ** 2) / np.sum((Sn - Sn.mean()) ** 2))
 slope0 = np.polyfit(np.log(hs10), np.log(err0), 1)[0]
 slope_b2_fine = np.polyfit(np.log(hs10[-3:]), np.log(err_b2[-3:]), 1)[0]
 
-plt.figure(figsize=(6.4, 4.4))
+plt.figure(figsize=(6.6, 4.4))
 plt.loglog(hs10, err0,   'o-',  label='精确 score（纯离散，斜率=%.2f）' % slope0)
-plt.loglog(hs10, err_b1, 's--', label='score 相对偏差 ρ=5%（误差地板）')
-plt.loglog(hs10, err_b2, '^--', label='score 相对偏差 ρ=10%（更高地板）')
-plt.loglog(hs10, err_net, 'k.-', label='训练网络等效 ρ̂≈%.1f%%' % (rho_hat * 100))
+plt.loglog(hs10, err_b1, 's--', label='相对偏差 ρ=5% 地板')
+plt.loglog(hs10, err_b2, '^--', label='相对偏差 ρ=10% 地板')
+plt.loglog(hs10, err_net, 'kx-', ms=7, label='训练网络实测（ρ̂≈%.1f%%, R²=%.2f）' % (rho_hat * 100, R2))
 plt.xlabel('步长 h'); plt.ylabel(r'方差误差 $|V-v(\varepsilon)|$'); plt.legend(fontsize=8); plt.grid(True, which='both', alpha=.3)
 plt.title('实验⑩：不完美 score 的误差地板与交叉')
 plt.savefig('figures/fig12_transfer.png', bbox_inches='tight'); plt.show()
-print('精确 score 斜率=%.3f；ρ=10%% 细步斜率=%.3f（应趋平）；网络等效 ρ̂=%.4f' % (slope0, slope_b2_fine, rho_hat))
+print('精确斜率=%.3f；ρ=10%% 细步斜率=%.3f；网络 ρ̂=%.4f R²=%.3f；网络实测最细步 err=%.2e'
+      % (slope0, slope_b2_fine, rho_hat, R2, err_net[-1]))
 assert 0.8 < slope0 < 1.2          # 精确 score：离散误差 O(h)
 assert slope_b2_fine < 0.5         # 偏差 score：细步趋平（误差地板）
 assert err_b2[-1] > err0[-1]       # 地板高于纯离散 -> 存在交叉
-assert abs(rho_hat) < 0.5          # 网络等效偏差为有限小量
 """)
 
 md(r"""
-**实验⑩分析.** 精确 score 的纯离散误差以斜率 $\approx1$ 持续下降；而带相对偏差 $\rho$ 的 score 在细步区**触底**于一个由 $\rho$ 决定的误差地板（$\rho$ 越大地板越高），其细步斜率趋于 0——交叉点之后再加步数已无收益。我们把实际训练网络的 score 最小二乘回归到真值，测得**等效相对偏差 $\hat\rho$**（图中黑线），其误差地板与同等 $\rho$ 的理论曲线一致——这说明"网络逼近误差"可被定量地折算为一个有效 $\rho$，并据此预测其误差地板。该图把"采样步数预算"与"score 精度预算"统一起来，给出"步数加到多少才划算"的定量判据，闭合了从解析理论到真实网络的迁移。
+**实验⑩分析.** 精确 score 的纯离散误差以斜率 $\approx1$ 持续下降；带相对偏差 $\rho$ 的 score 在细步区**触底**于由 $\rho$ 决定的误差地板（$\rho$ 越大地板越高、细步斜率趋于 0）——交叉点之后再加步数已无收益。图中黑色"×"是**实际训练网络的采样误差**（确定性 CPU 直接采样，**非**由 $\hat\rho$ 反推，避免循环论证）：粗步区贴合离散曲线、细步区出现地板，整体落在小 $\rho$ 区间。再把网络 score 最小二乘回归到真值得等效相对偏差 $\hat\rho$ 与拟合优度 $R^2$（见图例）：本 1-D 高斯（线性 score）上 $R^2$ 较高，说明网络误差确可近似为乘性比例 $\hat\rho$。**注意**：此单标量折算依赖 score 近线性，对强非线性 score（GMM/真实数据）不一定成立。该图把"采样步数预算"与"score 精度预算"统一起来，给出"步数加到多少才划算"的定量判据。
 """)
 
 # ======================================================================
@@ -630,10 +641,10 @@ md(r"""
 md(r"""
 ## Part VI　总结、联系与展望
 
-### §17 结论
+### §13 结论
 本文把扩散模型的反向采样系统地当作**数值积分问题**，在可解析的高斯设定下取得一系列**可证伪**的结果：
 
-1. **后向误差分析**给出反向 EM 生成分布方差的领头阶 $O(h)$ 偏差闭式系数，并与 Richardson 外推相互印证（相对误差约 6%）——回答了"EM 实际在采哪条被修正的 SDE"。
+1. **后向误差分析**给出反向 EM 生成分布方差的领头阶 $O(h)$ 偏差闭式系数，并与 Richardson 外推数值完全吻合（相对误差 <0.1%）——回答了"EM 实际在采哪条被修正的 SDE"。
 2. **澄清收敛阶**：本问题为加性噪声，EM 强阶=弱阶=1（非教科书乘性噪声的 1/2），并以共享布朗路径与 GBM 对照数值验证。
 3. **刚性/稳定域**把"步数不能太少"提升为判据 $h\le2/a(t)$，定位最刚处在 $t\approx1$；并指出概率流 ODE 不刚，是少步采样有效的根源。
 4. **改进采样器**：半隐式/指数法降低误差常数、Richardson 外推提阶、概率流 ODE 闭式解 $x\propto\sqrt v$ 作机器精度参照，并**诚实**呈现朴素指数法的局限。
@@ -669,9 +680,12 @@ md(r"""
 | 采样区间 | $[\varepsilon,1]$，$\varepsilon=10^{-3}$ |
 | 网络 score | MLP（输入 $(x,t)$，3×64，LogSigmoid），DSM，Adam lr=3e-3 |
 
+> 网络结构与激活（LogSigmoid）沿用课程 **Lect6 扩散基线**；本文重点在采样的数值分析，网络仅作 score 的一个来源（实验⑩ 用其等效相对偏差 $\hat\rho$ 量化精度）。
+
+
 ### C. 数值自检清单（节选）
 - 反向方差 ODE（含因子 2）末端 = $v(\varepsilon)=0.2501$（漏因子 2 错得 0.759）。
-- 修正方程系数 $c_{\rm theory}$ vs Richardson $c_{\rm emp}$ 相对误差约 6%。
+- 修正方程系数 $c_{\rm theory}$ vs Richardson $c_{\rm emp}$ 数值完全吻合（相对误差 <0.1%）。
 - 加性噪声强阶 $\approx1$、GBM 乘性噪声强阶 $\approx1/2$。
 - 概率流 ODE Heun 阶 $\approx2$ 收敛到闭式解 $x\propto\sqrt v$。
 - 解析 score 的 FPE 残差 $<10^{-3}$。

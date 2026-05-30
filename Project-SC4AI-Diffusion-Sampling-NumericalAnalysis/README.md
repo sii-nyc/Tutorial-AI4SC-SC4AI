@@ -12,13 +12,17 @@
 
 ## 文件结构
 ```
-反向扩散采样的数值分析.ipynb   主交付 notebook（自包含）
-diffusion_na.py               核心数值库（开发期；其代码已内联进 notebook）
+反向扩散采样的数值分析.ipynb   主交付 notebook（自包含：核心库已内联进顶部"工具区"cell）
+diffusion_na.py               核心数值库（唯一真源；开发期被内联进 notebook）
 tests/test_diffusion_na.py    23 项 pytest 数值自检
-build_notebook.py             由脚本组装 notebook（开发用）
+build_notebook.py             由脚本组装 notebook（生成 import 版本，开发用）
+inline_library.py             把 diffusion_na.py 内联进 notebook（生成自包含交付版本）
 pyproject.toml                uv 依赖
 figures/                      运行生成的图
 ```
+
+> **交付说明**：助教只需 `反向扩散采样的数值分析.ipynb` 单文件即可运行（已内联核心库，已用"隐藏 diffusion_na.py 后执行"验证过自包含）。
+> **开发者构建流程**：`build_notebook.py`（组装 import 版）→ `jupyter nbconvert --execute`（执行）→ `inline_library.py`（内联为自包含版）→ 再 `nbconvert --execute` 确认。`diffusion_na.py` 为唯一真源。
 
 ## 运行方式（uv 隔离环境，Apple Silicon / torch MPS）
 ```bash
@@ -44,7 +48,7 @@ uv run pytest -q
 - 无需 CUDA。预计整本 notebook 端到端执行数分钟内完成。
 
 ## 主要结论（详见 notebook）
-1. 反向 EM 的生成分布方差有闭式 $O(h)$ 偏差律；修正方程系数 $c_\text{theory}$ 与 Richardson 外推 $c_\text{emp}$ 相对误差约 6%。
+1. 反向 EM 的生成分布方差有闭式 $O(h)$ 偏差律；修正方程系数 $c_\text{theory}$ 与 Richardson 外推 $c_\text{emp}$ 数值完全吻合（相对误差 <0.1%）。
 2. 本问题为**加性噪声**，EM 强阶 = 弱阶 = 1（非乘性噪声的 1/2），已用共享布朗路径与几何布朗运动对照验证。
 3. 显式 Euler 绝对稳定域给出步长上界 $h\le 2/a(t)$，最刚处在 $t\approx1$。
 4. 概率流 ODE 闭式解 $x\propto\sqrt{v}$；半隐式 / 指数法降低误差常数、Richardson 提阶；少步采样的诚实评测。

@@ -108,8 +108,16 @@ def exact_score_gmm(x, t, means, weights, s0=0.4):
 # 3. 反向动力学与精确方差参照（含因子 2）
 # ----------------------------------------------------------------------
 def reverse_drift_coeff(t, s0=DATA_STD):
-    """a(t) = beta(t)(1/v(t) - 1/2) > 0."""
+    """a(t) = beta(t)(1/v(t) - 1/2)（s0<1 时 v(t)<1 => a(t)>0 全程成立）。"""
     return beta(t) * (1.0 / marginal_var(t, s0) - 0.5)
+
+
+def reverse_drift_coeff_prime(t, s0=DATA_STD):
+    """a'(t) 闭式导数（供解析 V''）：a=beta(1/v-1/2)，beta'=BMAX-BMIN，v'=-(v-1)beta。"""
+    v = marginal_var(t, s0)
+    b = beta(t)
+    bp = BETA_MAX - BETA_MIN
+    return bp * (1.0 / v - 0.5) + b ** 2 * (v - 1.0) / v ** 2
 
 
 def reverse_variance_exact(t_end, s0=DATA_STD, t_start=1.0, V_start=None, dense=False):
@@ -182,10 +190,12 @@ def bias_coeff_theory(eps=EPS, s0=DATA_STD, M=40000):
     t = 1.0 - taus
     a = reverse_drift_coeff(t, s0)
     sol = reverse_variance_exact(eps, s0=s0, V_start=marginal_var(1.0, s0), dense=True)
-    hh = 1e-4
     V = sol.sol(taus)[0]
-    Vpp = (sol.sol(np.clip(taus + hh, 0.0, T))[0] - 2.0 * V
-           + sol.sol(np.clip(taus - hh, 0.0, T))[0]) / hh ** 2
+    # 解析 V''(τ)：V'=F=-2aV+β ⇒ V''=dF/dτ=2a'(1-τ)V - 2a(1-τ)F - β'(1-τ)（机器精度，与差分步长无关）
+    F = -2.0 * a * V + beta(t)
+    ap = reverse_drift_coeff_prime(t, s0)
+    bp = BETA_MAX - BETA_MIN
+    Vpp = 2.0 * ap * V - 2.0 * a * F - bp
     H = a ** 2 * V - 0.5 * Vpp                          # 修正项（含离散耦合 G=a^2 V）
     cum = np.concatenate([[0.0], np.cumsum(0.5 * (a[1:] + a[:-1]) * np.diff(taus))])  # ∫_0^s a
     Phi = np.exp(-2.0 * (cum[-1] - cum))                # exp(∫_s^T -2a)
