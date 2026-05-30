@@ -128,6 +128,20 @@ def test_pf_ode_heun_higher_order_than_euler():
     assert e_heun < e_euler
 
 
+def test_reverse_sample_em_matches_analytic():
+    s0, eps, N = 0.5, 1e-3, 200
+    sf = lambda x, t: dna.exact_score_gaussian(x, t, s0)
+    X = dna.reverse_sample(sf, N, "em", n_samples=200000, dim=1, eps=eps, seed=1)
+    assert X.var() == pytest.approx(dna.em_variance_recursion(N, eps=eps, s0=s0), rel=0.05)
+
+
+def test_reverse_sample_pf_matches_closed_form():
+    s0, eps = 0.5, 1e-3
+    sf = lambda x, t: dna.exact_score_gaussian(x, t, s0)
+    x = dna.reverse_sample(sf, 2000, "pf_heun", x0=np.array([[2.0]]), dim=1, eps=eps)
+    assert float(x[0, 0]) == pytest.approx(dna.pf_ode_exact(2.0, eps=eps, s0=s0), rel=1e-3)
+
+
 # ---------- 7. 度量 ----------
 def test_bures_w2_self_zero_and_1d():
     assert dna.bures_w2(np.zeros(2), np.eye(2), np.zeros(2), np.eye(2)) == pytest.approx(0, abs=1e-9)

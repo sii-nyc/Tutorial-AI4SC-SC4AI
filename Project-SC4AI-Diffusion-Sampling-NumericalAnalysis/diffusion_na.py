@@ -242,6 +242,45 @@ def pf_ode_sample(N, method, x_start, eps=EPS, s0=DATA_STD):
 
 
 # ----------------------------------------------------------------------
+# 6b. 通用 score-based 反向采样器（解析或网络 score 均可，用于多维实验）
+# ----------------------------------------------------------------------
+def reverse_sample(score_fn, N, method="em", x0=None, n_samples=1000, dim=2,
+                   eps=EPS, seed=0, return_nfe=False):
+    """反向积分（t:1->eps，正步长 h）。score_fn(x[M,d], t) -> [M,d]。
+
+    method:
+      'em'       反向 SDE Euler-Maruyama:  x += h(½β x + β s) + sqrt(βh) z
+      'pf_euler' 概率流 ODE 反向 Euler:     x += h(½β x + ½β s)
+      'pf_heun'  概率流 ODE 反向 Heun(2阶): 两段平均
+    与解析采样器一致（s=-x/v 时 'em' 化为 (1-ah)x+√(βh)z）。
+    """
+    rng = np.random.default_rng(seed)
+    ts = np.linspace(1.0, eps, N + 1)
+    if x0 is None:
+        x = rng.standard_normal((n_samples, dim))
+    else:
+        x = np.asarray(x0, dtype=float).copy()
+    nfe = 0
+    for i in range(N):
+        t = ts[i]
+        h = ts[i] - ts[i + 1]
+        b = beta(t)
+        s = score_fn(x, t); nfe += 1
+        if method == "em":
+            x = x + h * (0.5 * b * x + b * s) + np.sqrt(b * h) * rng.standard_normal(x.shape)
+        elif method == "pf_euler":
+            x = x + h * (0.5 * b * x + 0.5 * b * s)
+        elif method == "pf_heun":
+            x1 = x + h * (0.5 * b * x + 0.5 * b * s)
+            t2 = ts[i + 1]; b2 = beta(t2)
+            s2 = score_fn(x1, t2); nfe += 1
+            x = x + 0.5 * h * ((0.5 * b * x + 0.5 * b * s) + (0.5 * b2 * x1 + 0.5 * b2 * s2))
+        else:
+            raise ValueError(f"unknown method: {method}")
+    return (x, nfe) if return_nfe else x
+
+
+# ----------------------------------------------------------------------
 # 7. 度量：Bures-W2、矩误差、sliced-Wasserstein、energy distance
 # ----------------------------------------------------------------------
 def _psd_sqrt(C):
