@@ -754,9 +754,40 @@ md(r"""
 ## 附录
 
 ### A. 复现说明
-- 依赖：Python 3.12 与 `numpy`、`scipy`、`matplotlib`、`scikit-learn`、`torch`（CPU 即可，无需 GPU/CUDA）。
-- 运行：直接"运行全部"即可；本 notebook 单文件自包含，所有数值函数定义在前面的"核心数值库"单元中，不依赖任何外部文件。
-- 全局随机种子 `SEED=2026`；解析与确定性实验为 NumPy 运算、逐位可复现；网络 score 实验默认在 CPU 上训练（亦逐位可复现）。
+
+本 notebook 单文件自包含：所有数值函数都定义在前面的"核心数值库"单元，不依赖任何外部文件，"运行全部"即可。依赖为 Python 3.12 与 `numpy`、`scipy`、`matplotlib`、`scikit-learn`、`torch`（CPU 即可，无需 GPU/CUDA）。下面给出从零搭建运行环境的两种方式。
+
+**方式一：用 uv 建隔离环境（推荐，不污染系统 Python）**
+
+```bash
+# 1) 安装 uv（macOS / Linux；已安装可跳过）
+curl -LsSf https://astral.sh/uv/install.sh | sh
+#    安装后重开终端，或执行 source ~/.bashrc / source ~/.zshrc 使 uv 生效
+#    （Windows PowerShell 用： powershell -c "irm https://astral.sh/uv/install.ps1 | iex"）
+
+# 2) 进入本 notebook 所在目录
+cd <本 .ipynb 所在的文件夹>
+
+# 3) 创建 Python 3.12 隔离环境并安装依赖
+uv venv --python 3.12
+uv pip install numpy scipy matplotlib scikit-learn torch jupyter ipykernel
+
+# 4) 启动 Jupyter 打开本 notebook，然后“运行全部”
+uv run jupyter lab            # 或：uv run jupyter notebook
+
+# （可选）命令行一键执行并就地保存结果：
+uv run jupyter nbconvert --to notebook --execute --inplace "反向扩散采样的数值分析.ipynb" \
+    --ExecutePreprocessor.timeout=1200
+```
+
+**方式二：已有 Python 环境，直接 pip 安装依赖**
+
+```bash
+pip install numpy scipy matplotlib scikit-learn torch jupyter
+jupyter lab        # 打开本 notebook 后“运行全部”
+```
+
+全程约数分钟（含两次小型 score 网络训练）。全局随机种子 `SEED=2026`：解析与确定性实验为 NumPy 运算、逐位可复现；网络 score 实验默认在 CPU 上训练，同样逐位可复现。
 
 ### B. 关键超参数
 | 项 | 值 |
